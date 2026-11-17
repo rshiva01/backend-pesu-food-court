@@ -1,0 +1,23 @@
+{$DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		-Server
+	}
+
+	# Docs/OpenAPI are off in production anyway; block at the edge too.
+	@docs path /api/v1/docs* /api/v1/openapi.json
+	respond @docs 404
+
+	handle /api/* {
+		reverse_proxy api:8000
+	}
+	handle {
+		reverse_proxy {$FRONTEND_UPSTREAM}
+	}
+}

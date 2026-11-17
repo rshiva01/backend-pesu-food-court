@@ -1,0 +1,8 @@
+# Local dev: Postgres + Redis only, bound to 127.0.0.1 so tests and
+# `uv run uvicorn` on the host can reach them.
+#   docker compose -f deploy/compose.yaml -f deploy/compose.dev.yaml --env-file .env up -d postgres redis
+services:
+  postgres:
+    ports: ["127.0.0.1:5432:5432"]
+  redis:
+    ports: ["127.0.0.1:6379:6379"]
