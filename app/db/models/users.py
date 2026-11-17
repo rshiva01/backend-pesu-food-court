@@ -52,3 +52,8 @@ class Session(UUIDPk, Timestamps, Base):
     ip: Mapped[str | None] = mapped_column(String(45))
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # set when rotated: lets a second tab that raced the same token get a plain
+    # 401 for a few seconds instead of tripping reuse detection
+    replaced_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    # "Remember me": refresh cookie survives browser restarts
+    persistent: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)

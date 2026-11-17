@@ -8,6 +8,21 @@ from app.core.logging import _redact
 from app.main import create_app
 
 
+def _pem() -> str:
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    return (
+        Ed25519PrivateKey.generate()
+        .private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+        .decode()
+    )
+
+
 async def test_health_ok(client: AsyncClient) -> None:
     r = await client.get("/api/v1/health")
     assert r.status_code == 200, r.text
@@ -73,6 +88,7 @@ def test_docs_hidden_in_production(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ENV", "production")
     monkeypatch.setenv("SECRET_KEY", "x" * 40)
     monkeypatch.setenv("ALLOWED_ORIGINS", '["https://food.example.edu"]')
+    monkeypatch.setenv("JWT_PRIVATE_KEY", _pem())
     config.get_settings.cache_clear()
     try:
         app = create_app()
@@ -88,7 +104,14 @@ def test_production_rejects_default_secret() -> None:
         Settings(env="production")
     with pytest.raises(ValidationError):
         Settings(env="production", secret_key="short")  # type: ignore[arg-type]
-    Settings(env="production", secret_key="y" * 40, allowed_origins=["https://a.edu"])  # type: ignore[arg-type]
+    with pytest.raises(ValidationError):  # missing JWT key
+        Settings(env="production", secret_key="y" * 40, allowed_origins=["https://a.edu"])  # type: ignore[arg-type]
+    Settings(
+        env="production",
+        secret_key="y" * 40,  # type: ignore[arg-type]
+        allowed_origins=["https://a.edu"],
+        jwt_private_key=_pem(),  # type: ignore[arg-type]
+    )
 
 
 def test_logs_redact_secrets() -> None:

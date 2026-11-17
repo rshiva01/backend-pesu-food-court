@@ -18,10 +18,21 @@ class Settings(BaseSettings):
     redis_url: str = "redis://:change-me-redis@localhost:6379/0"
     secret_key: SecretStr = SecretStr(DEV_SECRET)
     allowed_origins: list[str] = ["http://localhost:3000"]
+    # Ed25519 private key (PEM) for access JWTs. Dev/test generate a throwaway
+    # key per process when unset; production requires it.
+    jwt_private_key: SecretStr | None = None
+    access_ttl_seconds: int = 600
+    refresh_ttl_days_remember: int = 30
+    refresh_ttl_hours_session: int = 12
 
     @property
     def is_prod(self) -> bool:
         return self.env == "production"
+
+    @property
+    def cookie_secure(self) -> bool:
+        # Secure cookies need https; dev runs over http (incl. phone on LAN).
+        return self.is_prod
 
     @model_validator(mode="after")
     def _prod_guard(self) -> Self:
@@ -31,6 +42,8 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "SECRET_KEY must be set to a random value of 32+ chars in production"
                 )
+            if self.jwt_private_key is None:
+                raise ValueError("JWT_PRIVATE_KEY is required in production")
             if any(o.startswith("http://") and "localhost" not in o for o in self.allowed_origins):
                 raise ValueError("ALLOWED_ORIGINS must be https in production")
         return self
