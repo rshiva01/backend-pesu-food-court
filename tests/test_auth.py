@@ -322,3 +322,28 @@ async def test_unknown_session_id_rejected(client: AsyncClient, sms: FakeSms) ->
             await db.delete(s)
         await db.commit()
     assert (await client.get("/api/v1/auth/me")).status_code == 401
+
+
+@pytest.mark.parametrize("remember", [True, False])
+async def test_remember_me_controls_cookie_lifetime(
+    client: AsyncClient, sms: FakeSms, remember: bool
+) -> None:
+    def refresh_cookie(headers: list[str]) -> str:
+        _, rt = svc.cookie_names("student")
+        return next(c for c in headers if c.startswith(f"{rt}="))
+
+    await client.post("/api/v1/auth/otp/request", json={"phone": PHONE})
+    r = await client.post(
+        "/api/v1/auth/otp/verify",
+        json={"phone": PHONE, "code": sms.sent[PHONE], "remember": remember},
+    )
+    first = refresh_cookie(r.headers.get_list("set-cookie"))
+    # remember → survives browser restart (30 days); otherwise a session cookie
+    assert ("Max-Age" in first) is remember
+    if remember:
+        assert int(first.split("Max-Age=")[1].split(";")[0]) > 29 * 24 * 3600
+
+    # the choice sticks across token rotation
+    r = await client.post("/api/v1/auth/refresh")
+    assert r.status_code == 204
+    assert ("Max-Age" in refresh_cookie(r.headers.get_list("set-cookie"))) is remember
