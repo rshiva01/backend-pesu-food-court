@@ -1,14 +1,13 @@
 import uuid
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, StringConstraints
+from pydantic import BaseModel, StringConstraints
+
+from app.schemas.catalog import VendorPublic
+from app.schemas.common import Strict
 
 Phone = Annotated[str, StringConstraints(pattern=r"^\+91[6-9]\d{9}$")]
 Code6 = Annotated[str, StringConstraints(pattern=r"^\d{6}$")]
-
-
-class Strict(BaseModel):
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
 
 class OtpRequest(Strict):
@@ -44,16 +43,6 @@ class StaffUserOut(BaseModel):
     username: str
     name: str
     role: Literal["vendor", "admin"]
-
-
-class VendorPublic(BaseModel):
-    id: uuid.UUID
-    slug: str
-    name: str
-    image_url: str | None
-    is_open: bool
-    tagline: str | None
-    prep_minutes: int | None
 
 
 class VendorMeOut(BaseModel):

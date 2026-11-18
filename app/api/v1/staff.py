@@ -5,7 +5,8 @@ from app.api.v1.auth import staff_out
 from app.core.deps import VendorCtx, current_admin, current_vendor
 from app.db.models import StaffAccount, User
 from app.db.session import get_session
-from app.schemas.auth import StaffUserOut, VendorMeOut, VendorPublic
+from app.schemas.auth import StaffUserOut, VendorMeOut
+from app.schemas.catalog import VendorPublic
 
 router = APIRouter(tags=["staff"])
 

@@ -15,6 +15,14 @@ from app.db.session import dispose_engine
 
 log = logging.getLogger("app")
 
+# Friendly text for fields the UI shows errors for (matches the mock's wording).
+FIELD_HINTS = {
+    "price_paise": "Price must be between ₹1 and ₹5000",
+    "prep_minutes": "Prep time must be 1–90 minutes",  # noqa: RUF001 (UI text)
+    "tagline": "Tagline is too long",
+}
+MENU_HINT = "Check the item details"
+
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -38,10 +46,15 @@ def create_app() -> FastAPI:
     app.add_middleware(CsrfMiddleware)
 
     @app.exception_handler(RequestValidationError)
-    async def _validation(_: Request, exc: RequestValidationError) -> JSONResponse:
+    async def _validation(request: Request, exc: RequestValidationError) -> JSONResponse:
         # Field locations only — never echo submitted values back.
         fields = [".".join(str(p) for p in e["loc"][1:]) for e in exc.errors()]
-        return JSONResponse({"detail": "Invalid request", "fields": fields}, status_code=422)
+        detail = next((FIELD_HINTS[f] for f in fields if f in FIELD_HINTS), None)
+        if detail is None and request.url.path.startswith("/api/v1/vendor/menu"):
+            detail = MENU_HINT
+        return JSONResponse(
+            {"detail": detail or "Invalid request", "fields": fields}, status_code=422
+        )
 
     @app.exception_handler(Exception)
     async def _unhandled(request: Request, exc: Exception) -> JSONResponse:

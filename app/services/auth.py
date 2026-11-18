@@ -25,8 +25,9 @@ from app.core.security import (
     token_digest,
     verify_password,
 )
-from app.db.models import AuditLog, Session, StaffAccount, User
+from app.db.models import Session, StaffAccount, User
 from app.db.models.enums import Role
+from app.services import audit
 from app.services.sms import get_sms
 
 log = logging.getLogger(__name__)
@@ -254,14 +255,13 @@ async def staff_login(
             acct.failed_logins += 1
             if acct.failed_logins >= STAFF_MAX_FAILS:
                 acct.locked_until, acct.failed_logins = now + STAFF_LOCK, 0
-                db.add(
-                    AuditLog(
-                        actor_user_id=acct.user_id,
-                        actor_label=username,
-                        action="auth.locked",
-                        entity="staff",
-                        ip=ip,
-                    )
+                audit.record(
+                    db,
+                    actor_id=acct.user_id,
+                    actor_label=username,
+                    action="auth.locked",
+                    entity="staff",
+                    ip=ip,
                 )
             await db.commit()
         raise HTTPException(401, BAD_STAFF)
@@ -270,13 +270,12 @@ async def staff_login(
         raise HTTPException(401, BAD_STAFF)
     await get_redis().set(f"totp:last:{acct.user_id}", step, ex=180)
     acct.failed_logins, acct.locked_until = 0, None
-    db.add(
-        AuditLog(
-            actor_user_id=user.id,
-            actor_label=username,
-            action="auth.login",
-            entity=user.role.value,
-            ip=ip,
-        )
+    audit.record(
+        db,
+        actor_id=user.id,
+        actor_label=username,
+        action="auth.login",
+        entity=user.role.value,
+        ip=ip,
     )
     return user, acct

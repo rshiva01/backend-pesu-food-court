@@ -1,7 +1,7 @@
 """Admin commands (run with: uv run python -m app.cli <command>).
 
 create-admin <username>  prompts for password, prints TOTP setup URI once
-seed-dev                 dev only: mock vendors + staff (dosa/dosa1234, admin/admin1234)
+seed-dev                 dev only: mock vendors + menus + staff (dosa/dosa1234, admin/admin1234)
 totp <username>          dev only: current TOTP code for a seeded account
 """
 
@@ -15,9 +15,40 @@ from sqlalchemy import select
 
 from app.core.config import get_settings
 from app.core.security import decrypt_secret, encrypt_secret, hash_password
-from app.db.models import StaffAccount, User, Vendor
+from app.db.models import MenuItem, StaffAccount, User, Vendor
 from app.db.models.enums import Role
 from app.db.session import dispose_engine, get_engine, get_session
+
+# Same items as frontend/mocks/fixtures.ts (rupees; converted to paise on insert).
+# name, rupees, category, description, is_veg, is_available
+DEV_MENUS: dict[str, list[tuple[str, int, str, str | None, bool, bool]]] = {
+    "dosa-corner": [
+        ("Masala Dosa", 60, "Dosa", "Crisp dosa, potato palya, chutney & sambar", True, True),
+        ("Plain Dosa", 45, "Dosa", None, True, True),
+        ("Onion Uttapam", 65, "Dosa", None, True, True),
+        ("Idli Vada", 50, "Tiffin", "2 idli + 1 vada", True, True),
+        ("Kesari Bath", 35, "Tiffin", None, True, False),
+        ("Filter Coffee", 20, "Drinks", None, True, True),
+        ("Masala Chai", 15, "Drinks", None, True, True),
+    ],
+    "slice-house": [
+        ("Margherita", 120, "Pizza", None, True, True),
+        ("Paneer Tikka Pizza", 160, "Pizza", None, True, True),
+        ("Chicken Pepperoni", 180, "Pizza", None, False, True),
+        ("Garlic Bread", 70, "Sides", None, True, True),
+        ("Cold Coffee", 60, "Drinks", None, True, True),
+    ],
+    "chaat-street": [
+        ("Pani Puri", 30, "Chaat", None, True, True),
+        ("Masala Puri", 40, "Chaat", None, True, True),
+        ("Bhel Puri", 40, "Chaat", None, True, True),
+        ("Sev Puri", 45, "Chaat", None, True, True),
+    ],
+    "juice-bar": [
+        ("Watermelon Juice", 40, "Juices", None, True, True),
+        ("Oreo Shake", 80, "Shakes", None, True, True),
+    ],
+}
 
 # Shared, publicly known secret: dev databases only (seed-dev refuses prod).
 DEV_TOTP_SECRET = "PFCDEVTOTPSECRETAAAAAAAAAAAAAAAA"  # noqa: S105  # nosec B105
@@ -131,8 +162,30 @@ async def seed_dev() -> None:
                 )
             )
             await db.commit()
+    await _seed_menus()
     print("Seeded. Staff passwords: admin/admin1234, dosa/dosa1234, slice/slice1234 …")
     print("TOTP code: uv run python -m app.cli totp dosa")
+
+
+async def _seed_menus() -> None:
+    async for db in get_session():
+        for slug, rows in DEV_MENUS.items():
+            v = await db.scalar(select(Vendor).where(Vendor.slug == slug))
+            if v is None or await db.scalar(select(MenuItem.id).where(MenuItem.vendor_id == v.id)):
+                continue  # idempotent: never touch a menu that already has items
+            for name, rupees, cat, desc, veg, avail in rows:
+                db.add(
+                    MenuItem(
+                        vendor_id=v.id,
+                        name=name,
+                        price_paise=rupees * 100,
+                        category=cat,
+                        description=desc,
+                        is_veg=veg,
+                        is_available=avail,
+                    )
+                )
+        await db.commit()
 
 
 async def totp(username: str) -> None:
