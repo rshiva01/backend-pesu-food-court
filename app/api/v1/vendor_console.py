@@ -1,4 +1,4 @@
-"""Vendor console: own menu + shop settings. Every query is scoped to the
+"""Vendor console: own menu, shop settings and order queue. Every query is scoped to the
 caller's vendor; another vendor's item id is simply 404 (no existence leak)."""
 
 import uuid
@@ -9,10 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.catalog import item_out, vendor_public
 from app.core.deps import VendorCtx, current_vendor
-from app.db.models import MenuItem, StaffAccount
+from app.db.models import MenuItem, Order, StaffAccount
 from app.db.session import get_session
 from app.schemas.catalog import MenuItemIn, MenuItemOut, MenuItemPatch, ShopPatch, VendorPublic
+from app.schemas.orders import StatusIn, VendorOrderOut, VendorStatsOut
 from app.services import audit
+from app.services import orders as orders_svc
 from app.services.auth import client_ip
 
 router = APIRouter(prefix="/vendor", tags=["vendor"])
@@ -133,3 +135,73 @@ async def update_shop(
         await _log(db, ctx, request, "shop.update", v.name, before=before, after=changes)
         await db.commit()
     return vendor_public(v)
+
+
+# ------------------------------------------------------------------ orders
+@router.get("/orders")
+async def my_orders(
+    ctx: VendorCtx = Depends(current_vendor), db: AsyncSession = Depends(get_session)
+) -> list[VendorOrderOut]:
+    rows = await db.scalars(
+        select(Order)
+        .where(
+            Order.vendor_id == ctx.vendor.id,
+            Order.business_date == orders_svc.business_today(),
+        )
+        .order_by(Order.created_at, Order.token_no)
+    )
+    return await orders_svc.vendor_orders_out(db, list(rows))
+
+
+@router.get("/stats")
+async def my_stats(
+    ctx: VendorCtx = Depends(current_vendor), db: AsyncSession = Depends(get_session)
+) -> VendorStatsOut:
+    return await orders_svc.vendor_stats(db, ctx.vendor)
+
+
+async def _order_done(
+    db: AsyncSession, ctx: VendorCtx, request: Request, o: Order, action: str, detail: str | None
+) -> VendorOrderOut:
+    await _log(db, ctx, request, action, o.token_no or str(o.id), detail=detail)
+    await db.commit()
+    return (await orders_svc.vendor_orders_out(db, [o]))[0]
+
+
+@router.patch("/orders/{order_id}/status")
+async def set_order_status(
+    order_id: uuid.UUID,
+    body: StatusIn,
+    request: Request,
+    ctx: VendorCtx = Depends(current_vendor),
+    db: AsyncSession = Depends(get_session),
+) -> VendorOrderOut:
+    o = await orders_svc.lock_vendor_order(db, ctx.vendor, order_id)
+    orders_svc.change_status(o, body.status)
+    return await _order_done(db, ctx, request, o, f"order.{body.status}", None)
+
+
+@router.post("/orders/{order_id}/mark-paid")
+async def mark_order_paid(
+    order_id: uuid.UUID,
+    request: Request,
+    ctx: VendorCtx = Depends(current_vendor),
+    db: AsyncSession = Depends(get_session),
+) -> VendorOrderOut:
+    o = await orders_svc.lock_vendor_order(db, ctx.vendor, order_id)
+    orders_svc.mark_paid(o)
+    return await _order_done(db, ctx, request, o, "order.mark_paid", _rupees(o.total_paise))
+
+
+@router.post("/orders/{order_id}/collect")
+async def collect_order(
+    order_id: uuid.UUID,
+    request: Request,
+    ctx: VendorCtx = Depends(current_vendor),
+    db: AsyncSession = Depends(get_session),
+) -> VendorOrderOut:
+    o = await orders_svc.lock_vendor_order(db, ctx.vendor, order_id)
+    orders_svc.collect(o, ctx.user)
+    (label,) = [v.student_label for v in await orders_svc.vendor_orders_out(db, [o])]
+    # who handed it over + to whom, so a wrong hand-over is traceable
+    return await _order_done(db, ctx, request, o, "order.collected", label)

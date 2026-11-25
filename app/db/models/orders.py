@@ -81,6 +81,21 @@ class OrderItem(UUIDPk, Base):
     )
 
 
+class VendorDayCounter(Base):
+    """Last token number handed out per vendor per IST day. Bumped with an
+    upsert inside the order transaction, so a rolled-back order never burns a
+    number and two checkouts can't get the same token."""
+
+    __tablename__ = "vendor_day_counters"
+    vendor_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("vendors.id", ondelete="CASCADE"), primary_key=True
+    )
+    business_date: Mapped[date] = mapped_column(Date, primary_key=True)
+    last_no: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    __table_args__ = (CheckConstraint("last_no >= 1", name="last_no_pos"),)
+
+
 class Payment(UUIDPk, Timestamps, Base):
     __tablename__ = "payments"
     order_id: Mapped[uuid.UUID] = mapped_column(

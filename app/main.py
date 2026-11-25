@@ -12,6 +12,7 @@ from app.core.logging import setup_logging
 from app.core.middleware import CsrfMiddleware, SecurityHeadersMiddleware
 from app.core.redis import close_redis
 from app.db.session import dispose_engine
+from app.services.orders import OrderConflict
 
 log = logging.getLogger("app")
 
@@ -20,6 +21,7 @@ FIELD_HINTS = {
     "price_paise": "Price must be between ₹1 and ₹5000",
     "prep_minutes": "Prep time must be 1–90 minutes",  # noqa: RUF001 (UI text)
     "tagline": "Tagline is too long",
+    "groups": "You can order from up to 4 counters at once",
 }
 MENU_HINT = "Check the item details"
 
@@ -55,6 +57,16 @@ def create_app() -> FastAPI:
         return JSONResponse(
             {"detail": detail or "Invalid request", "fields": fields}, status_code=422
         )
+
+    @app.exception_handler(OrderConflict)
+    async def _order_conflict(_: Request, exc: OrderConflict) -> JSONResponse:
+        # Tells the cart which vendor / item to fix.
+        body: dict[str, str] = {"detail": exc.detail}
+        if exc.vendor_id:
+            body["vendor_id"] = str(exc.vendor_id)
+        if exc.item_id:
+            body["item_id"] = str(exc.item_id)
+        return JSONResponse(body, status_code=409)
 
     @app.exception_handler(Exception)
     async def _unhandled(request: Request, exc: Exception) -> JSONResponse:
