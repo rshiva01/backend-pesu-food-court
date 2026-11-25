@@ -147,6 +147,7 @@ async def my_orders(
         .where(
             Order.vendor_id == ctx.vendor.id,
             Order.business_date == orders_svc.business_today(),
+            orders_svc.VISIBLE_TO_VENDOR,
         )
         .order_by(Order.created_at, Order.token_no)
     )
@@ -177,7 +178,7 @@ async def set_order_status(
     db: AsyncSession = Depends(get_session),
 ) -> VendorOrderOut:
     o = await orders_svc.lock_vendor_order(db, ctx.vendor, order_id)
-    orders_svc.change_status(o, body.status)
+    await orders_svc.change_status(db, o, body.status)
     return await _order_done(db, ctx, request, o, f"order.{body.status}", None)
 
 

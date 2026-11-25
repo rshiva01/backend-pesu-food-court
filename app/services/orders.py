@@ -33,6 +33,9 @@ OPEN = (
     OrderStatus.ready,
 )
 NOT_COUNTED = (OrderStatus.cancelled, OrderStatus.refunded)
+# Vendors only see orders that got a token: counter orders at once, online
+# orders after verified payment. Unpaid / expired online orders stay hidden.
+VISIBLE_TO_VENDOR = Order.token_no.is_not(None)
 
 
 class OrderConflict(Exception):
@@ -144,8 +147,6 @@ async def place_orders(
     if prior:
         return prior, False
 
-    if body.payment_mode == PaymentMode.online:  # Razorpay arrives in M5
-        raise HTTPException(422, "Online payment is coming soon — pay at the counter for now")
     vendor_ids = [g.vendor_id for g in body.groups]
     if len(set(vendor_ids)) != len(vendor_ids):
         raise HTTPException(422, "Invalid request")
@@ -179,7 +180,10 @@ async def place_orders(
 
     # Pass 2: write. Counters are locked in vendor-id order so two multi-vendor
     # checkouts can't deadlock on each other's token rows.
+    # Online orders get their token only once the payment is verified
+    # (order_payments.confirm_payment), so unpaid food never reaches a vendor.
     day, now = business_today(), datetime.now(UTC)
+    online = body.payment_mode == PaymentMode.online
     created: dict[uuid.UUID, Order] = {}
     try:
         for v, lines in sorted(planned, key=lambda p: p[0].id):
@@ -189,9 +193,9 @@ async def place_orders(
                 student_id=sid,
                 vendor_id=v.id,
                 business_date=day,
-                token_no=await next_token(db, v, day),
-                status=OrderStatus.awaiting_payment,
-                payment_mode=PaymentMode.counter,
+                token_no=None if online else await next_token(db, v, day),
+                status=OrderStatus.pending_payment if online else OrderStatus.awaiting_payment,
+                payment_mode=body.payment_mode,
                 payment_status=PaymentStatus.unpaid,
                 total_paise=sum(mi.price_paise * qty for mi, qty in lines),
                 created_at=now,
@@ -224,18 +228,24 @@ async def lock_vendor_order(db: AsyncSession, vendor: Vendor, order_id: uuid.UUI
     """Row-locked so two counter tablets can't both act on one order.
     Another vendor's order id is just 'not found'."""
     o = await db.scalar(
-        select(Order).where(Order.id == order_id, Order.vendor_id == vendor.id).with_for_update()
+        select(Order)
+        .where(Order.id == order_id, Order.vendor_id == vendor.id, VISIBLE_TO_VENDOR)
+        .with_for_update()
     )
     if o is None:
         raise HTTPException(404, "Order not found")
     return o
 
 
-def change_status(o: Order, to: OrderStatus) -> None:
+async def change_status(db: AsyncSession, o: Order, to: OrderStatus) -> None:
     if to not in VENDOR_TRANSITIONS.get(o.status, frozenset()):
         raise HTTPException(409, f"Can’t move an order from {o.status} to {to}")  # noqa: RUF001 (UI text)
     if to == OrderStatus.cancelled and o.payment_status == PaymentStatus.paid:
-        o.payment_status = PaymentStatus.refunded  # gateway refund: M5
+        if o.payment_mode == PaymentMode.online:
+            from app.services.order_payments import refund_order  # avoid import cycle
+
+            await refund_order(db, o)  # raises (and nothing changes) if the gateway fails
+        o.payment_status = PaymentStatus.refunded  # counter: cash handed back
     if to == OrderStatus.ready:
         o.ready_at = datetime.now(UTC)
     o.status = to
@@ -272,7 +282,11 @@ async def vendor_stats(db: AsyncSession, vendor: Vendor) -> VendorStatsOut:
                     0,
                 ),
                 func.count().filter(Order.status.in_(OPEN)),
-            ).where(Order.vendor_id == vendor.id, Order.business_date == business_today())
+            ).where(
+                Order.vendor_id == vendor.id,
+                Order.business_date == business_today(),
+                VISIBLE_TO_VENDOR,
+            )
         )
     ).one()
     return VendorStatsOut(orders_today=row[0], revenue_today_paise=row[1], open_orders=row[2])

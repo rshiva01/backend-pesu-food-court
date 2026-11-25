@@ -29,3 +29,11 @@ async def health(session: AsyncSession = Depends(get_session)) -> JSONResponse:
     return JSONResponse(
         {"status": "ok" if ok else "degraded", **checks}, status_code=200 if ok else 503
     )
+
+
+@router.get("/config")
+async def public_config() -> dict[str, object]:
+    """Feature switches the UI needs before login."""
+    from app.services import payments
+
+    return {"online_payments": True, "payment_provider": payments.get_payments().name}

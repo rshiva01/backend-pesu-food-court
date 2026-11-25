@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.api.v1 import auth, catalog, health, orders, staff, vendor_console
+from app.api.v1 import auth, catalog, health, orders, payments, staff, vendor_console
 
 router = APIRouter(prefix="/api/v1")
 router.include_router(health.router)
@@ -10,4 +10,5 @@ router.include_router(staff.router)
 router.include_router(catalog.router)
 router.include_router(vendor_console.router)
 router.include_router(orders.router)
-# milestone 5+: payments, admin/*, events (SSE)
+router.include_router(payments.router)
+# milestone 6+: admin/*, events (SSE)

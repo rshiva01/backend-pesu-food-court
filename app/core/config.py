@@ -24,6 +24,11 @@ class Settings(BaseSettings):
     access_ttl_seconds: int = 600
     refresh_ttl_days_remember: int = 30
     refresh_ttl_hours_session: int = 12
+    # Online payments. "fake" = in-process stand-in for dev/tests (refused in prod).
+    payment_provider: Literal["fake", "razorpay"] = "fake"
+    razorpay_key_id: str = ""
+    razorpay_key_secret: SecretStr | None = None
+    razorpay_webhook_secret: SecretStr | None = None
 
     @property
     def is_prod(self) -> bool:
@@ -46,6 +51,10 @@ class Settings(BaseSettings):
                 raise ValueError("JWT_PRIVATE_KEY is required in production")
             if any(o.startswith("http://") and "localhost" not in o for o in self.allowed_origins):
                 raise ValueError("ALLOWED_ORIGINS must be https in production")
+            if self.payment_provider != "razorpay" or not (
+                self.razorpay_key_id and self.razorpay_key_secret and self.razorpay_webhook_secret
+            ):
+                raise ValueError("Razorpay keys and webhook secret are required in production")
         return self
 
 

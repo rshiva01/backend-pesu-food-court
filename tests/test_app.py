@@ -1,3 +1,5 @@
+from typing import Any
+
 import pytest
 from fastapi import APIRouter
 from httpx import ASGITransport, AsyncClient
@@ -89,6 +91,10 @@ def test_docs_hidden_in_production(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SECRET_KEY", "x" * 40)
     monkeypatch.setenv("ALLOWED_ORIGINS", '["https://food.example.edu"]')
     monkeypatch.setenv("JWT_PRIVATE_KEY", _pem())
+    monkeypatch.setenv("PAYMENT_PROVIDER", "razorpay")
+    monkeypatch.setenv("RAZORPAY_KEY_ID", "rzp_live_x")
+    monkeypatch.setenv("RAZORPAY_KEY_SECRET", "s")
+    monkeypatch.setenv("RAZORPAY_WEBHOOK_SECRET", "w")
     config.get_settings.cache_clear()
     try:
         app = create_app()
@@ -106,11 +112,22 @@ def test_production_rejects_default_secret() -> None:
         Settings(env="production", secret_key="short")  # type: ignore[arg-type]
     with pytest.raises(ValidationError):  # missing JWT key
         Settings(env="production", secret_key="y" * 40, allowed_origins=["https://a.edu"])  # type: ignore[arg-type]
+    prod: dict[str, Any] = {
+        "env": "production",
+        "secret_key": "y" * 40,
+        "allowed_origins": ["https://a.edu"],
+        "jwt_private_key": _pem(),
+    }
+    with pytest.raises(ValidationError):  # fake payments / no Razorpay keys
+        Settings(**prod)
+    with pytest.raises(ValidationError):  # missing webhook secret
+        Settings(**prod, payment_provider="razorpay", razorpay_key_id="k", razorpay_key_secret="s")
     Settings(
-        env="production",
-        secret_key="y" * 40,  # type: ignore[arg-type]
-        allowed_origins=["https://a.edu"],
-        jwt_private_key=_pem(),  # type: ignore[arg-type]
+        **prod,
+        payment_provider="razorpay",
+        razorpay_key_id="k",
+        razorpay_key_secret="s",
+        razorpay_webhook_secret="w",
     )
 
 

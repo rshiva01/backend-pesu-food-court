@@ -197,12 +197,23 @@ async def totp(username: str) -> None:
         print(pyotp.TOTP(decrypt_secret(acct.totp_secret_enc)).now())
 
 
+async def expire_pending() -> None:
+    """Cancel unpaid online orders past their payment window (cron, every few minutes)."""
+    from app.services.order_payments import expire_pending as expire
+
+    async for db in get_session():
+        n = await expire(db)
+        await db.commit()
+        print(f"expired {n} unpaid online order(s)")
+
+
 def main() -> None:
     p = argparse.ArgumentParser(prog="app.cli")
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("create-admin").add_argument("username")
     sub.add_parser("seed-dev")
     sub.add_parser("totp").add_argument("username")
+    sub.add_parser("expire-pending")
     a = p.parse_args()
 
     async def run() -> None:
@@ -212,6 +223,8 @@ def main() -> None:
                 await create_admin(a.username)
             elif a.cmd == "seed-dev":
                 await seed_dev()
+            elif a.cmd == "expire-pending":
+                await expire_pending()
             else:
                 await totp(a.username)
         finally:

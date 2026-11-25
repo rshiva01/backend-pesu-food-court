@@ -15,7 +15,7 @@ from app.core.redis import close_redis, get_redis
 from app.db.models import Base
 from app.db.session import dispose_engine, get_engine
 from app.main import create_app
-from tests.helpers import sms  # noqa: F401  (shared fixture)
+from tests.helpers import shop, sms  # noqa: F401  (shared fixtures)
 
 # Tests WIPE the database and Redis db they point at. Use dedicated ones:
 #   DATABASE_URL=…/pfc_test  REDIS_URL=…/1

@@ -1,90 +1,25 @@
 import asyncio
 import uuid
-from collections.abc import AsyncIterator, Callable
-from contextlib import asynccontextmanager
+from collections.abc import Callable
 from datetime import date
 from typing import Any
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import func, select
+from sqlalchemy import select
 
-from app.db.models import AuditLog, MenuItem, Order, OrderItem, Vendor
+from app.db.models import AuditLog, MenuItem, Order, OrderItem
 from app.db.session import get_session
 from app.services import orders as svc
-from tests.helpers import FakeSms, code_at, login_student, make_vendor_staff, staff_login
-
-OTHER_PHONE = "+919812345678"
-
-
-# ------------------------------------------------------------------ helpers
-async def add_menu_item(
-    vendor: Vendor, name: str, price: int, *, available: bool = True
-) -> MenuItem:
-    async for db in get_session():
-        mi = MenuItem(
-            vendor_id=vendor.id,
-            name=name,
-            category="Main",
-            price_paise=price,
-            is_available=available,
-        )
-        db.add(mi)
-        await db.commit()
-        return mi
-    raise AssertionError("unreachable")
-
-
-async def set_vendor(vendor: Vendor, **fields: Any) -> None:
-    async for db in get_session():
-        v = await db.get(Vendor, vendor.id)
-        assert v is not None
-        for k, val in fields.items():
-            setattr(v, k, val)
-        await db.commit()
-
-
-async def count(model: Any) -> int:
-    async for db in get_session():
-        return int(await db.scalar(select(func.count()).select_from(model)) or 0)
-    return 0
-
-
-def body(*groups: tuple[Vendor, list[tuple[MenuItem, int]]], key: str | None = None) -> Any:
-    return {
-        "groups": [
-            {
-                "vendor_id": str(v.id),
-                "items": [{"menu_item_id": str(m.id), "qty": q} for m, q in lines],
-            }
-            for v, lines in groups
-        ],
-        "payment_mode": "counter",
-        "idempotency_key": key or str(uuid.uuid4()),
-    }
-
-
-@asynccontextmanager
-async def vendor_login(
-    make_client: Callable[[], AsyncClient], username: str
-) -> AsyncIterator[AsyncClient]:
-    async with make_client() as c:
-        assert await staff_login(c, username, f"{username}-pass-123", code_at()) == 200
-        yield c
-
-
-@pytest.fixture
-async def shop() -> dict[str, Any]:
-    dosa = await make_vendor_staff("dosa", "dosa-pass-123", "DOS", "Dosa Corner")
-    pizza = await make_vendor_staff("pizza", "pizza-pass-123", "PIZ", "Pizza Hut")
-    return {
-        "dosa": dosa,
-        "pizza": pizza,
-        "masala": await add_menu_item(dosa, "Masala Dosa", 6000),
-        "plain": await add_menu_item(dosa, "Plain Dosa", 4000),
-        "sold": await add_menu_item(dosa, "Rava Dosa", 7000, available=False),
-        "marg": await add_menu_item(pizza, "Margherita", 15000),
-    }
+from tests.helpers import (
+    OTHER_PHONE,
+    FakeSms,
+    body,
+    count,
+    login_student,
+    set_vendor,
+    vendor_login,
+)
 
 
 # ---------------------------------------------------------------- checkout
@@ -162,18 +97,6 @@ async def test_too_many_vendors_message(client: AsyncClient, sms: FakeSms, shop:
     r = await client.post("/api/v1/orders", json=b)
     assert r.status_code == 422
     assert r.json()["detail"] == "You can order from up to 4 counters at once"
-
-
-async def test_online_payment_not_available_yet(
-    client: AsyncClient, sms: FakeSms, shop: Any
-) -> None:
-    await login_student(client, sms)
-    b = body((shop["dosa"], [(shop["masala"], 1)]))
-    b["payment_mode"] = "online"
-    r = await client.post("/api/v1/orders", json=b)
-    assert r.status_code == 422
-    assert "coming soon" in r.json()["detail"]
-    assert await count(Order) == 0
 
 
 async def test_idempotent_retry(client: AsyncClient, sms: FakeSms, shop: Any) -> None:
